@@ -1,6 +1,6 @@
-###The python implementation of algorithm described in clustring by fast search and find of density peaks
+###The python implementation of algorithm described in clustering by fast search and find of density peaks
 
-####Only for iris dataset,  if you want to use other dataset , plase modify the function "load_file" and "evaluate"
+####Only for iris dataset or dataset with the same pattern ,  if you want to use other dataset , please modify the function "load_file" and "evaluate"
 
 
 >The results:

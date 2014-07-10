@@ -1,5 +1,6 @@
 #encoding utf-8
 import math
+import sys
 from collections import defaultdict
 
 def distance(a, b, gauss=True):
@@ -43,24 +44,18 @@ def load_file(file_name) :
 
 def pair_dis(data, gauss=True) :
     """
-        calculate all record pair distances
+        Calculate all pair distances between records
     """
     distances = {}
-    count = 1 
 
     length = len(data)
-    i = 0 
-
     max_dis = 0.0
-    min_dis = 100000000
+    min_dis = sys.float_info.max
 
-    while i < length - 1 :
-        j = i + 1
-        while j < length :
+    for i in xrange(length - 1) :
+        for j in xrange(i + 1, length) :
             dis = distance(data[i], data[j], gauss)
-
-            sub = frozenset((i,j))
-            distances[sub] = dis
+            distances[frozenset((i,j))] = dis
 
             if dis > max_dis :
                 max_dis = dis
@@ -68,24 +63,15 @@ def pair_dis(data, gauss=True) :
             if dis < min_dis :
                 min_dis = dis
 
-            j += 1
-
-        i += 1
-
-    # if not gauss :
-    #     for k, v in distances.iteritems() :
-    #         distances[k] = v / max_dis
-
     return distances, max_dis, min_dis
 
 def select_dc(allnum, distances, max_dis, min_dis) :
     """
-    auto-tune dc
+        Auto-tune dc
     """
     dc = (max_dis + min_dis) / 2.0
-    count = 0
 
-    while True :
+    for i in xrange(100) :
         sumnum = 0
         for k, v in distances.iteritems() :
             if v < dc : 
@@ -93,8 +79,7 @@ def select_dc(allnum, distances, max_dis, min_dis) :
 
         mean_dc = float(sumnum) / (allnum ** 2)
 
-        count += 1
-        if count > 100 or (mean_dc > 0.01 and mean_dc < 0.02) :
+        if mean_dc > 0.01 and mean_dc < 0.02 :
             break
 
         if mean_dc > 0.02 :
@@ -122,19 +107,17 @@ def density(allnum, distances, density_distance_threshold, max_dis) :
             for i in k :
                 dens[i] += 1
 
-    for i in range(allnum) :
+    for i in xrange(allnum) :
         dens[i] += 0
 
     sortdens = sorted(dens.items(), key=lambda v : v[1], reverse=True)
     length = len(sortdens)
 
-    #sortdens = [(k, float(v) / length) for k, v in sortdens]
-
     candidate = [{'q' : sortdens[0][0], 'm' : sortdens[0][1], 'd' : max_dis, 's' : -1}]
 
     for i in range(1, length) :
-        min_distance = 100000000.0
-        min_query = 0
+        min_distance = sys.float_info.max
+        min_record = 0
 
         for j in range(i) :
             sub = frozenset((sortdens[i][0], sortdens[j][0]))
@@ -142,9 +125,9 @@ def density(allnum, distances, density_distance_threshold, max_dis) :
 
             if dis < min_distance :
                 min_distance = dis
-                min_query = sortdens[j][0]
+                min_record = sortdens[j][0]
 
-        one = {'q' : sortdens[i][0], 'm' : sortdens[i][1], 'd' : min_distance, 's' : min_query}
+        one = {'q' : sortdens[i][0], 'm' : sortdens[i][1], 'd' : min_distance, 's' : min_record}
         candidate.append(one)
 
     return candidate
@@ -175,7 +158,7 @@ def dump_candidate_file(candidate, out_file) :
     """
     fw = open(out_file, 'w')
     for one in candidate :
-        fw.write("%d\t%.4f\t%.4f\t%d\n" % (one['q'], one['m'], one['d'], one['s']))
+        fw.write("%d\t%d\t%.4f\t%d\n" % (one['q'], one['m'], one['d'], one['s']))
     fw.close()
 
 def load_candidate_file(cand_file) :
@@ -199,7 +182,34 @@ def load_candidate_file(cand_file) :
 
             yield item, density, distance, nearest_item
 
-def evaluate(center, cluster, label) :
+def confidence(cluster, distances, dc) :
+    """
+        Calculate the confidence for each record
+        confidence = s / n
+        n : the num of records with a distance dc
+        s : the num of records with a distance dc and having the same cluster
+    """
+    dens = defaultdict(lambda : {'n' : 0, 's' : 0})
+
+    for k, v in distances.iteritems() :
+        if v < dc : 
+            issame = False
+            templist = list(k)
+            if templist[0] in cluster and templist[1] in cluster and cluster[templist[0]] == cluster[templist[1]] :
+                issame = True
+
+            for i in k :
+                dens[i]['n'] += 1
+                if issame :
+                    dens[i]['s'] += 1
+
+    reliable = {}
+    for k,  v in dens.iteritems() :
+        reliable[k] = float(v['s']) / v['n']
+
+    return reliable
+
+def evaluate(center, cluster, label, reliable, file_name) :
     """
         evaluate precision and recall
     """
@@ -207,16 +217,30 @@ def evaluate(center, cluster, label) :
     norecall = 0
     correct = 0
 
+    fw = open(file_name, 'w')
+
     for k , v in cluster.iteritems() :
         
+        cluster_str = ""
         if v == -1 :
             norecall += 1
+            cluster_str += "NORECALL\t"
         elif cmp(label[v], label[k]) == 0 :
             correct += 1
+            cluster_str += "CORRECT\t"
         else :
-            print k, label[v], label[k]
+            cluster_str += "ERROR\t"
+
+        cluster_str += "%d\t%s\t%s\t" % (k, label[v], label[k])
+        if k in reliable :
+            cluster_str += "%.4f" % reliable[k]
+        else :
+            cluster_str += "-"
 
         allcount += 1
+        fw.write(cluster_str + '\n')
+
+    fw.close()
 
     print 'allcount: ', allcount
     print 'correct : ', correct
@@ -239,4 +263,6 @@ if __name__ == '__main__':
     center, cluster = clustering('debug_iris_candidate', 1, 0.38)
     print "CENTER:", center
 
-    evaluate(center, cluster, label)
+    reliable = confidence(cluster, distances, dc)
+
+    evaluate(center, cluster, label, reliable, 'debug_iris_cluster')
